@@ -4,7 +4,7 @@
   "private": true,
   "description": "Painel para garimpar ofertas do Mercado Livre e preparar publicações para WhatsApp.",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server2.js"
   },
   "engines": {
     "node": ">=18"
