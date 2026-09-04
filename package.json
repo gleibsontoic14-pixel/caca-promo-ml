@@ -1,10 +1,10 @@
 {
   "name": "caca-promo-ml",
-  "version": "4.1.0",
+  "version": "4.2.0",
   "private": true,
   "description": "Painel para garimpar ofertas do Mercado Livre e preparar publicações para WhatsApp.",
   "scripts": {
-    "start": "node server4.js"
+    "start": "node server5.js"
   },
   "engines": {
     "node": ">=18"
