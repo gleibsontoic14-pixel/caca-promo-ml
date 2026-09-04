@@ -44,60 +44,93 @@ function connected(){return!!(ML_ACCESS_TOKEN_ENV||state.oauth?.access_token)}
 async function tokenRequest(params){const r=await fetch('https://api.mercadolibre.com/oauth/token',{method:'POST',headers:{Accept:'application/json','Content-Type':'application/x-www-form-urlencoded'},body:new URLSearchParams(params)});const d=await r.json().catch(()=>({}));if(!r.ok)throw new Error(d.message||d.error_description||d.error||`OAuth ${r.status}`);return d}
 function storeToken(d){state.oauth={access_token:d.access_token||'',refresh_token:d.refresh_token||state.oauth?.refresh_token||'',expires_at:Date.now()+Math.max(0,Number(d.expires_in||21600)-120)*1000,user_id:d.user_id||state.oauth?.user_id||null};save()}
 async function ensureToken(){if(ML_ACCESS_TOKEN_ENV)return ML_ACCESS_TOKEN_ENV;if(state.oauth?.access_token&&Number(state.oauth.expires_at||0)>Date.now())return state.oauth.access_token;if(state.oauth?.refresh_token&&oauthReady()){const d=await tokenRequest({grant_type:'refresh_token',client_id:ML_CLIENT_ID,client_secret:ML_CLIENT_SECRET,refresh_token:state.oauth.refresh_token});storeToken(d);return state.oauth.access_token}throw new Error('Mercado Livre não conectado. Use o botão Conectar Mercado Livre.')}
-async function mlGet(url){const token=await ensureToken();const r=await fetch(url,{headers:{Accept:'application/json','User-Agent':'CacaPromoML/2.5',Authorization:`Bearer ${token}`}});const text=await r.text();let data={};try{data=JSON.parse(text)}catch{data={raw:text}}if(!r.ok)throw new Error(`Mercado Livre API ${r.status}: ${String(text).slice(0,220)}`);return data}
+async function mlGet(url){const token=await ensureToken();const r=await fetch(url,{headers:{Accept:'application/json','User-Agent':'CacaPromoML/2.6',Authorization:`Bearer ${token}`}});const text=await r.text();let data={};try{data=JSON.parse(text)}catch{data={raw:text}}if(!r.ok)throw new Error(`Mercado Livre API ${r.status}: ${String(text).slice(0,220)}`);return data}
 
 function searchTerms(q){const n=String(q||'').trim().toLowerCase();if(['ofertas','oferta','promo','promos','promoção','promoções','promocao','promocoes'].includes(n))return ['celular','air fryer','smart tv','fone bluetooth'];return [String(q||'').trim()]}
+async function catalogSearch(term){const u=new URL('https://api.mercadolibre.com/products/search');u.searchParams.set('status','active');u.searchParams.set('site_id','MLB');u.searchParams.set('q',term);u.searchParams.set('limit','20');const d=await mlGet(u);return d.results||[]}
+async function productDetail(productId){return mlGet(`https://api.mercadolibre.com/products/${encodeURIComponent(productId)}`)}
 
-async function catalogSearch(term){const u=new URL('https://api.mercadolibre.com/products/search');u.searchParams.set('status','active');u.searchParams.set('site_id','MLB');u.searchParams.set('q',term);u.searchParams.set('limit','8');const d=await mlGet(u);return d.results||[]}
-async function productItems(productId){const u=new URL(`https://api.mercadolibre.com/products/${encodeURIComponent(productId)}/items`);u.searchParams.set('limit','20');const d=await mlGet(u);return d.results||[]}
-async function itemDetail(itemId){return mlGet(`https://api.mercadolibre.com/items/${encodeURIComponent(itemId)}`)}
-
-function norm(detail,q){
-  const price=Number(detail.price||0),free=!!detail.shipping?.free_shipping,sold=Number(detail.sold_quantity||0),official=!!detail.official_store_id;
-  const pic=detail.thumbnail||detail.pictures?.[0]?.secure_url||detail.pictures?.[0]?.url||'';
-  return {id:detail.id,query:q,title:detail.title||detail.family_name||detail.id,price,original_price:null,discount:0,discount_known:false,permalink:detail.permalink||`https://produto.mercadolivre.com.br/${detail.id}`,thumbnail:String(pic).replace(/^http:/,'https:'),free_shipping:free,sold_quantity:sold,official_store:official,score:Math.round(Math.min(100,Math.min(15,Math.log10(sold+1)*5)+(free?8:0)+(official?5:0))),affiliate_url:'',status:'pending',found_at:new Date().toISOString(),catalog_product_id:detail.catalog_product_id||null};
+function promoFromProduct(prod,query){
+  const w=prod.buy_box_winner;
+  if(!w||!w.item_id||!Number(w.price))return null;
+  const price=Number(w.price||0);
+  const original=Number(w.original_price||0);
+  const discountKnown=original>price&&price>0;
+  const discount=discountKnown?Math.round((1-price/original)*100):0;
+  const free=!!w.shipping?.free_shipping;
+  const official=!!w.official_store_id;
+  const sold=0;
+  const score=Math.round(Math.min(100,(discountKnown?discount*1.7:0)+(free?8:0)+(official?5:0)));
+  const pic=prod.pictures?.[0]?.url||prod.pictures?.[0]?.secure_url||'';
+  return {
+    id:w.item_id,
+    query,
+    title:prod.name||prod.family_name||w.item_id,
+    price,
+    original_price:discountKnown?original:null,
+    discount,
+    discount_known:discountKnown,
+    permalink:prod.permalink||`https://www.mercadolivre.com.br/p/${prod.id}`,
+    thumbnail:String(pic).replace(/^http:/,'https:'),
+    free_shipping:free,
+    sold_quantity:sold,
+    official_store:official,
+    score,
+    affiliate_url:'',
+    status:'pending',
+    found_at:new Date().toISOString(),
+    catalog_product_id:prod.id
+  };
 }
-async function sale(p){try{const u=new URL(`https://api.mercadolibre.com/items/${encodeURIComponent(p.id)}/sale_price`);u.searchParams.set('context','channel_marketplace');const d=await mlGet(u);const a=Number(d.amount||p.price),reg=Number(d.regular_amount||0);p.price=a;if(reg>a&&a>0){p.original_price=reg;p.discount=Math.round((1-a/reg)*100);p.discount_known=true}else{p.original_price=null;p.discount=0;p.discount_known=true}p.score=Math.round(Math.min(100,p.discount*1.7+Math.min(15,Math.log10((p.sold_quantity||0)+1)*5)+(p.free_shipping?8:0)+(p.official_store?5:0)))}catch(e){p.price_error=e.message}return p}
 
 async function marketplaceCandidates(query){
-  const picked=[];
+  const out=[];
+  const seenProducts=new Set();
   for(const term of searchTerms(query)){
     const products=await catalogSearch(term);
-    for(const prod of products){
+    for(const base of products){
+      if(!base?.id||seenProducts.has(base.id))continue;
+      seenProducts.add(base.id);
       try{
-        const listings=await productItems(prod.id);
-        const valid=listings.filter(x=>x.item_id&&Number(x.price)>0).sort((a,b)=>Number(a.price)-Number(b.price));
-        for(const x of valid.slice(0,1))if(!picked.some(y=>y.item_id===x.item_id))picked.push({item_id:x.item_id,term});
-      }catch(e){console.log(`Produto ${prod.id} ignorado: ${e.message}`)}
+        const detail=await productDetail(base.id);
+        const p=promoFromProduct(detail,query);
+        if(p&&!out.some(x=>x.id===p.id))out.push(p);
+      }catch(e){console.log(`Produto ${base.id} ignorado: ${e.message}`)}
     }
-  }
-  const out=[];
-  for(const c of picked.slice(0,24)){
-    try{const d=await itemDetail(c.item_id);out.push(await sale(norm(d,query)))}catch(e){console.log(`Item ${c.item_id} ignorado: ${e.message}`)}
   }
   return out;
 }
 
-function pass(p){const s=state.settings;return p.discount_known&&p.discount>=Number(s.minDiscount||0)&&(!Number(s.maxPrice||0)||p.price<=Number(s.maxPrice))&&(!s.freeOnly||p.free_shipping)&&p.score>=Number(s.minScore||0)}
+function pass(p){
+  const s=state.settings;
+  const discountPass=Number(s.minDiscount||0)<=0 ? true : (p.discount_known&&p.discount>=Number(s.minDiscount||0));
+  return discountPass&&(!Number(s.maxPrice||0)||p.price<=Number(s.maxPrice))&&(!s.freeOnly||p.free_shipping)&&p.score>=Number(s.minScore||0);
+}
+
 async function scan(){
   let added=0,checked=0,errors=[];
   for(const w of state.watchlists.filter(x=>x.enabled)){
     try{
-      const products=await marketplaceCandidates(w.query);checked+=products.length;
+      const products=await marketplaceCandidates(w.query);
+      checked+=products.length;
       for(const p of products){if(!pass(p)||state.seen[p.id])continue;state.seen[p.id]=new Date().toISOString();state.queue.unshift(p);added++}
     }catch(e){errors.push(`${w.query}: ${e.message}`)}
   }
-  state.queue=state.queue.slice(0,500);state.lastScanAt=new Date().toISOString();
-  state.lastScanMessage=errors.length?`${added} novas; ${checked} ofertas verificadas; erros: ${errors.join(' | ')}`:`${added} novas promoções; ${checked} ofertas verificadas pelo catálogo oficial.`;
-  save();console.log(`[SCAN] ${state.lastScanMessage}`);return{added,checked,errors,tokenConfigured:connected(),at:state.lastScanAt};
+  state.queue=state.queue.slice(0,500);
+  state.lastScanAt=new Date().toISOString();
+  state.lastScanMessage=errors.length?`${added} novas; ${checked} produtos verificados; erros: ${errors.join(' | ')}`:`${added} novas promoções; ${checked} produtos verificados pela Buy Box oficial.`;
+  save();
+  console.log(`[SCAN] ${state.lastScanMessage}`);
+  return{added,checked,errors,tokenConfigured:connected(),at:state.lastScanAt};
 }
-function pub(){return{settings:state.settings,watchlists:state.watchlists,queue:state.queue,lastScanAt:state.lastScanAt,lastScanMessage:state.lastScanMessage,tokenConfigured:connected(),oauthReady:oauthReady(),oauthUserId:state.oauth?.user_id||null,oauthExpiresAt:state.oauth?.expires_at||0,redirectUri:ML_REDIRECT_URI,searchMode:'catalog_products'}}
+function pub(){return{settings:state.settings,watchlists:state.watchlists,queue:state.queue,lastScanAt:state.lastScanAt,lastScanMessage:state.lastScanMessage,tokenConfigured:connected(),oauthReady:oauthReady(),oauthUserId:state.oauth?.user_id||null,oauthExpiresAt:state.oauth?.expires_at||0,redirectUri:ML_REDIRECT_URI,searchMode:'product_buy_box'}}
 let timer;function schedule(){clearInterval(timer);timer=setInterval(()=>{if(state.settings.autoScan&&connected())scan().catch(e=>console.log('[AUTO]',e.message))},Math.max(5,Number(state.settings.scanMinutes||15))*60000)}schedule();
 
 const server=http.createServer(async(req,res)=>{
   try{
-    const url=new URL(req.url,`http://${req.headers.host}`);if(req.method==='OPTIONS')return send(res,204,'');
-    if(url.pathname==='/api/health')return json(res,200,{ok:true,tokenConfigured:connected(),oauthReady:oauthReady(),scanMinutes:state.settings.scanMinutes,searchMode:'catalog_products'});
+    const url=new URL(req.url,`http://${req.headers.host}`);
+    if(req.method==='OPTIONS')return send(res,204,'');
+    if(url.pathname==='/api/health')return json(res,200,{ok:true,tokenConfigured:connected(),oauthReady:oauthReady(),scanMinutes:state.settings.scanMinutes,searchMode:'product_buy_box'});
     if(url.pathname==='/oauth/callback'){
       const code=url.searchParams.get('code'),error=url.searchParams.get('error'),returnedState=url.searchParams.get('state');let html='';
       try{if(error)throw new Error(error);if(!code)throw new Error('Código de autorização não recebido.');if(!state.oauth_state||returnedState!==state.oauth_state.value||Date.now()>state.oauth_state.expires_at)throw new Error('State OAuth inválido ou expirado. Tente conectar novamente.');const d=await tokenRequest({grant_type:'authorization_code',client_id:ML_CLIENT_ID,client_secret:ML_CLIENT_SECRET,code,redirect_uri:ML_REDIRECT_URI});storeToken(d);state.oauth_state=null;save();html='<p style="color:#8df0aa;font-size:20px">✅ Mercado Livre conectado com sucesso!</p><p>O bot já pode buscar promoções.</p>'}catch(e){html=`<p style="color:#ff8b8b;font-size:20px">❌ Não consegui conectar.</p><p>${String(e.message).replace(/[<>]/g,'')}</p>`}
@@ -119,4 +152,4 @@ const server=http.createServer(async(req,res)=>{
     return staticFile(url,res);
   }catch(e){console.log('[HTTP ERROR]',e.message);json(res,500,{error:'Erro interno.',details:e.message})}
 });
-server.listen(PORT,HOST,()=>{console.log(`Caça Promo ML: http://localhost:${PORT}`);console.log(`OAuth Mercado Livre: ${oauthReady()?'configurado':'faltando credenciais'}`);console.log('Busca: catálogo oficial + publicações do produto');if(state.settings.autoScan&&connected())scan().catch(e=>console.log('[START SCAN]',e.message))});
+server.listen(PORT,HOST,()=>{console.log(`Caça Promo ML: http://localhost:${PORT}`);console.log(`OAuth Mercado Livre: ${oauthReady()?'configurado':'faltando credenciais'}`);console.log('Busca: catálogo + Buy Box oficial');if(state.settings.autoScan&&connected())scan().catch(e=>console.log('[START SCAN]',e.message))});
