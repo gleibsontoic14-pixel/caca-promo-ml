@@ -5,11 +5,11 @@ const Module = require('module');
 const basePath = path.join(__dirname, 'server6.js');
 let source = fs.readFileSync(basePath, 'utf8');
 
-// A API pode retornar 403/404 em recursos que não pertencem ao usuário.
-// Evita repetir chamadas permanentes e impede que o painel fique preso em “Buscando promoções…”.
+// Mantém a proteção anti-travamento, mas numa busca manual atualiza/reexibe
+// produtos válidos que já tinham sido encontrados antes.
 source = source.replace(
   "let source = fs.readFileSync(serverPath, 'utf8');",
-  "let source = fs.readFileSync(serverPath, 'utf8');\nsource = source.replace('async function mlGet(url, attempts = 3) {', 'async function mlGet(url, attempts = 1) {');"
+  "let source = fs.readFileSync(serverPath, 'utf8');\nsource = source.replace('async function mlGet(url, attempts = 3) {', 'async function mlGet(url, attempts = 1) {');\nsource = source.replace('async function scan() {', 'async function scan(manual = false) {');\nsource = source.replace('if (state.seen[p.id]) continue;', 'const existingIndex = state.queue.findIndex(x => x.id === p.id); if (existingIndex >= 0) { const old = state.queue[existingIndex]; state.queue[existingIndex] = { ...p, affiliate_url: old.affiliate_url || \"\", status: old.status || \"pending\" }; if (manual && existingIndex > 0) { const fresh = state.queue.splice(existingIndex, 1)[0]; state.queue.unshift(fresh); } continue; } if (!manual && state.seen[p.id]) continue;');\nsource = source.replace(\"if (url.pathname === '/api/admin/scan' && req.method === 'POST') return json(res, 200, await scan());\", \"if (url.pathname === '/api/admin/scan' && req.method === 'POST') return json(res, 200, await scan(true));\");"
 );
 source = source.replace(
   "const content = Array.isArray(h && h.content) ? h.content : [];",
@@ -110,10 +110,10 @@ const replacement = `async function resolveCatalogProduct(productId, query, rank
 
 source = source.slice(0, start) + replacement + source.slice(end + 2);
 source = source
-  .replace("'User-Agent': 'CacaPromoML/4.4'", "'User-Agent': 'CacaPromoML/4.7'")
-  .replace("searchMode: 'official_highlights_v44'", "searchMode: 'official_highlights_v47'")
-  .replace("searchMode: 'official_highlights_v44'", "searchMode: 'official_highlights_v47'")
-  .replace('Caça Promo ML 4.4:', 'Caça Promo ML 4.7:')
+  .replace("'User-Agent': 'CacaPromoML/4.4'", "'User-Agent': 'CacaPromoML/4.8'")
+  .replace("searchMode: 'official_highlights_v44'", "searchMode: 'official_highlights_v48'")
+  .replace("searchMode: 'official_highlights_v44'", "searchMode: 'official_highlights_v48'")
+  .replace('Caça Promo ML 4.4:', 'Caça Promo ML 4.8:')
   .replace('${result.stats.catalogFailures} falhas catálogo`);', '${result.stats.catalogFailures} falhas catálogo, ${result.stats.pdpOffers || 0} ofertas PDP, ${result.stats.pdpEmpty || 0} PDP vazios, ${result.stats.pdpFailures || 0} falhas PDP`);');
 
 const runtime = new Module(basePath, module);
