@@ -13,7 +13,7 @@ source = source.replace(
 );
 source = source.replace(
   "const content = Array.isArray(h && h.content) ? h.content : [];",
-  "const content = (Array.isArray(h && h.content) ? h.content : []).slice(0, 6);"
+  "const content = (Array.isArray(h && h.content) ? h.content : []).slice(0, 10);"
 );
 source = source.replace(
   "stats.userProductTypes++;\n        const up = await userProductDetail(row.id);",
@@ -30,7 +30,7 @@ const replacement = `async function resolveCatalogProduct(productId, query, rank
   depth = Number(depth || 0);
   visited = visited || new Set();
   if (!productId || visited.has(productId)) return null;
-  if (Number(stats.catalogCalls || 0) >= 18) return null;
+  if (Number(stats.catalogCalls || 0) >= 26) return null;
   visited.add(productId);
   stats.catalogCalls = Number(stats.catalogCalls || 0) + 1;
   if (depth > 0) stats.childProductsChecked = Number(stats.childProductsChecked || 0) + 1;
@@ -57,7 +57,7 @@ const replacement = `async function resolveCatalogProduct(productId, query, rank
     const childrenRaw = Array.isArray(prod && prod.children_ids) ? prod.children_ids : [];
     const children = childrenRaw.map(function(c){ return typeof c === 'string' ? c : c && c.id; }).filter(Boolean).slice(0, 2);
     for (const childId of children) {
-      if (Number(stats.catalogCalls || 0) >= 18) break;
+      if (Number(stats.catalogCalls || 0) >= 26) break;
       const p = await resolveCatalogProduct(childId, query, rank, stats, depth + 1, visited);
       if (p) return p;
     }
@@ -110,10 +110,10 @@ const replacement = `async function resolveCatalogProduct(productId, query, rank
 
 source = source.slice(0, start) + replacement + source.slice(end + 2);
 source = source
-  .replace("'User-Agent': 'CacaPromoML/4.4'", "'User-Agent': 'CacaPromoML/4.6'")
-  .replace("searchMode: 'official_highlights_v44'", "searchMode: 'official_highlights_v46'")
-  .replace("searchMode: 'official_highlights_v44'", "searchMode: 'official_highlights_v46'")
-  .replace('Caça Promo ML 4.4:', 'Caça Promo ML 4.6:')
+  .replace("'User-Agent': 'CacaPromoML/4.4'", "'User-Agent': 'CacaPromoML/4.7'")
+  .replace("searchMode: 'official_highlights_v44'", "searchMode: 'official_highlights_v47'")
+  .replace("searchMode: 'official_highlights_v44'", "searchMode: 'official_highlights_v47'")
+  .replace('Caça Promo ML 4.4:', 'Caça Promo ML 4.7:')
   .replace('${result.stats.catalogFailures} falhas catálogo`);', '${result.stats.catalogFailures} falhas catálogo, ${result.stats.pdpOffers || 0} ofertas PDP, ${result.stats.pdpEmpty || 0} PDP vazios, ${result.stats.pdpFailures || 0} falhas PDP`);');
 
 const runtime = new Module(basePath, module);
