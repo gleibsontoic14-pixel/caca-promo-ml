@@ -1,0 +1,17 @@
+{
+  "settings": {
+    "minDiscount": 20,
+    "maxPrice": 0,
+    "freeOnly": false,
+    "minScore": 0,
+    "scanMinutes": 15,
+    "autoScan": true
+  },
+  "watchlists": [
+    {"id":"inicial","query":"ofertas","enabled":true}
+  ],
+  "queue": [],
+  "seen": {},
+  "lastScanAt": null,
+  "lastScanMessage": "Ainda não executado."
+}
