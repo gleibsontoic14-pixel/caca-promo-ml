@@ -97,6 +97,42 @@ async function userProductItemIds(sellerId, userProductId) {
   const d = await mlGet(u, 2);
   return Array.isArray(d && d.results) ? d.results : [];
 }
+async function resolveCatalogProduct(productId, query, rank, stats, depth, visited) {
+  depth = Number(depth || 0);
+  visited = visited || new Set();
+  if (!productId || visited.has(productId)) return null;
+  if (Number(stats.catalogCalls || 0) >= 55) return null;
+  visited.add(productId);
+  stats.catalogCalls = Number(stats.catalogCalls || 0) + 1;
+  if (depth > 0) stats.childProductsChecked = Number(stats.childProductsChecked || 0) + 1;
+
+  let prod;
+  try {
+    prod = await productDetail(productId);
+  } catch (e) {
+    stats.catalogFailures = Number(stats.catalogFailures || 0) + 1;
+    console.log('[CATALOGO ' + productId + ']', e.message);
+    return null;
+  }
+
+  const winner = prod && prod.buy_box_winner;
+  if (winner && winner.item_id && Number(winner.price || 0) > 0) {
+    const sale = await salePrice(winner.item_id);
+    const p = fromWinner(prod, winner, query, rank, sale);
+    if (p) return p;
+  }
+
+  if (depth >= 2) return null;
+  const childrenRaw = Array.isArray(prod && prod.children_ids) ? prod.children_ids : [];
+  const children = childrenRaw.map(function(c){ return typeof c === 'string' ? c : c && c.id; }).filter(Boolean).slice(0, 3);
+  for (const childId of children) {
+    if (Number(stats.catalogCalls || 0) >= 55) break;
+    await sleep(140);
+    const p = await resolveCatalogProduct(childId, query, rank, stats, depth + 1, visited);
+    if (p) return p;
+  }
+  return null;
+}
 `;
 source = replaceBetween(source, 'async function itemBulk(ids) {', '\n\nfunction fromWinner(', itemBlock);
 
@@ -124,7 +160,7 @@ const fromItemBlock = `function fromItem(itemId, body, query, rank, sale, fallba
 source = replaceBetween(source, 'function fromItem(itemId, body, query, rank, sale) {', '\n\nasync function discoverOffers(', fromItemBlock);
 
 const discoverBlock = `async function discoverOffers(query) {
-  const stats = { category: '', brand: '', highlights: 0, productTypes: 0, itemTypes: 0, userProductTypes: 0, resolved: 0, discounted: 0, upResolved: 0 };
+  const stats = { category: '', brand: '', highlights: 0, productTypes: 0, itemTypes: 0, userProductTypes: 0, resolved: 0, discounted: 0, upResolved: 0, catalogCalls: 0, childProductsChecked: 0, catalogFailures: 0 };
   const domain = await discoverDomain(query);
   stats.category = domain.categoryName || domain.categoryId;
   stats.brand = domain.brandName || '';
@@ -146,11 +182,7 @@ const discoverBlock = `async function discoverOffers(query) {
     try {
       if (row.type === 'PRODUCT') {
         stats.productTypes++;
-        const prod = await productDetail(row.id);
-        const winner = prod && prod.buy_box_winner;
-        if (!winner || !winner.item_id) continue;
-        const sale = await salePrice(winner.item_id);
-        const p = fromWinner(prod, winner, query, rank, sale);
+        const p = await resolveCatalogProduct(row.id, query, rank, stats, 0, new Set());
         if (p) { out.push(p); stats.resolved++; if (p.discount > 0) stats.discounted++; }
       } else if (row.type === 'ITEM') {
         stats.itemTypes++;
@@ -186,11 +218,11 @@ const discoverBlock = `async function discoverOffers(query) {
 source = replaceBetween(source, 'async function discoverOffers(query) {', '\n\nfunction passesFilters(', discoverBlock);
 
 source = source
-  .replace("'User-Agent': 'CacaPromoML/4.0'", "'User-Agent': 'CacaPromoML/4.3'")
-  .replace("searchMode: 'official_highlights_v4'", "searchMode: 'official_highlights_v43'")
-  .replace("searchMode: 'official_highlights_v4'", "searchMode: 'official_highlights_v43'")
-  .replace('Caça Promo ML 4.0:', 'Caça Promo ML 4.3:')
-  .replace("notes.push(`${w.query}: ${result.stats.category}${result.stats.brand ? ` / ${result.stats.brand}` : ''}, ${result.stats.highlights} destaques, ${result.stats.resolved} com preço`);", "notes.push(`${w.query}: ${result.stats.category}${result.stats.brand ? ` / ${result.stats.brand}` : ''}, ${result.stats.highlights} destaques (${result.stats.userProductTypes} UP / ${result.stats.productTypes} catálogo / ${result.stats.itemTypes} itens), ${result.stats.resolved} com preço`);");
+  .replace("'User-Agent': 'CacaPromoML/4.0'", "'User-Agent': 'CacaPromoML/4.4'")
+  .replace("searchMode: 'official_highlights_v4'", "searchMode: 'official_highlights_v44'")
+  .replace("searchMode: 'official_highlights_v4'", "searchMode: 'official_highlights_v44'")
+  .replace('Caça Promo ML 4.0:', 'Caça Promo ML 4.4:')
+  .replace("notes.push(`${w.query}: ${result.stats.category}${result.stats.brand ? ` / ${result.stats.brand}` : ''}, ${result.stats.highlights} destaques, ${result.stats.resolved} com preço`);", "notes.push(`${w.query}: ${result.stats.category}${result.stats.brand ? ` / ${result.stats.brand}` : ''}, ${result.stats.highlights} destaques (${result.stats.userProductTypes} UP / ${result.stats.productTypes} catálogo / ${result.stats.itemTypes} itens), ${result.stats.resolved} com preço, ${result.stats.childProductsChecked} filhos verificados, ${result.stats.catalogFailures} falhas catálogo`);");
 
 const runtime = new Module(serverPath, module);
 runtime.filename = serverPath;
